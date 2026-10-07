@@ -2,150 +2,185 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Gender Swap Cam</title>
+<title>Gender Swap Cam – Real-time</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <style>
-:root{--bg:#f6f4fb;--fg:#1d1a2b;--card:#fff;--accent:#7c4dff;--mut:#6b6880;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#14121f;--fg:#f1eefc;--card:#1e1b2e;--accent:#a58bff;--mut:#9b97b3}}
-:root[data-theme="dark"]{--bg:#14121f;--fg:#f1eefc;--card:#1e1b2e;--accent:#a58bff;--mut:#9b97b3}
-html{scroll-padding-top:env(safe-area-inset-top,0px)}
+:root{--bg:#f6f4fb;--fg:#1d1a2b;--card:#fff;--accent:#7c4dff;--mut:#6b6880}
+@media (prefers-color-scheme:dark){:root{--bg:#14121f;--fg:#f1eefc;--card:#1e1b2e;--accent:#a58bff;--mut:#9b97b3}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;display:flex;flex-direction:column;align-items:center;padding:16px}
 h1{font-size:1.4rem;margin:4px 0}
 p.sub{margin:0 0 12px;color:var(--mut);font-size:.9rem;text-align:center;max-width:560px}
-.stage{position:relative;width:100%;max-width:640px;background:#000;border-radius:16px;overflow:hidden;aspect-ratio:4/3;touch-action:none}
+.stage{position:relative;width:100%;max-width:720px;background:#000;border-radius:16px;overflow:hidden;aspect-ratio:4/3}
 canvas{width:100%;height:100%;display:block}
-.ph{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#ddd;text-align:center;padding:20px;font-size:.95rem}
-.bar{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:12px;max-width:640px}
-button{border:0;border-radius:999px;padding:10px 16px;font-size:.95rem;background:var(--card);color:var(--fg);cursor:pointer;box-shadow:0 1px 3px #0003}
+.ph{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#ddd;text-align:center;padding:20px}
+.bar{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:12px}
+button{border:0;border-radius:999px;padding:10px 18px;font-size:.95rem;background:var(--card);color:var(--fg);cursor:pointer;box-shadow:0 1px 3px #0003}
 button.on,button.main{background:var(--accent);color:#fff}
-.row{display:flex;align-items:center;gap:10px;margin-top:12px;font-size:.85rem;color:var(--mut)}
+.row{display:flex;align-items:center;gap:10px;margin-top:12px;font-size:.9rem;color:var(--mut)}
 #msg{margin-top:10px;font-size:.85rem;color:var(--mut);text-align:center;max-width:560px;min-height:1.2em}
 </style>
+<script src="https://cdn.jsdelivr.net/npm/delaunator@5.0.1/delaunator.min.js"></script>
 </head>
 <body>
 <h1>Gender Swap Cam</h1>
-<p class="sub">Live camera filter that restyles faces with feminine or masculine features. Everything runs in your browser; no video leaves your device.</p>
-<div class="stage"><canvas id="c" width="640" height="480"></canvas><div class="ph" id="ph">Tap “Start camera” to begin</div></div>
+<p class="sub">Real-time face reshaping: jaw, eyes, brows, lips, nose, skin and shading. Hair is not changed. Runs fully in your browser.</p>
+<div class="stage"><canvas id="c" width="640" height="480"></canvas><div class="ph" id="ph">Tap “Start camera”</div></div>
 <div class="bar">
   <button class="main" id="start">Start camera</button>
-  <button id="fem">Feminine</button>
-  <button id="masc">Masculine</button>
+  <button id="fem" class="on">To Female</button>
+  <button id="masc">To Male</button>
   <button id="off">Original</button>
   <button id="snap">Snapshot</button>
 </div>
-<div class="row" id="manual" style="display:none"><span>Face size</span><input type="range" id="size" min="80" max="400" value="200"><span>drag on the video to position</span></div>
+<div class="row"><span>Strength</span><input type="range" id="k" min="0" max="150" value="100"></div>
 <div id="msg"></div>
-<script>
-const cv=document.getElementById('c'),ctx=cv.getContext('2d'),vid=document.createElement('video');
-vid.playsInline=true;vid.muted=true;
-let mode='fem',running=false,faces=[],detector=null,manual={x:320,y:230,w:200,h:260},lastDet=0,hairCol='#4a2c1a';
+<script type="module">
+import {FaceLandmarker,FilesetResolver} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/+esm";
 const $=id=>document.getElementById(id),msg=t=>$('msg').textContent=t||'';
-const dots=[];let s=7;const rnd=()=>(s=(s*16807)%2147483647)/2147483647;
-while(dots.length<600){const u=rnd()*2-1,v=rnd();if(u*u+v*v<1)dots.push([u,v,rnd()*1.6+.6])}
-try{if('FaceDetector' in window)detector=new FaceDetector({fastMode:true,maxDetectedFaces:6})}catch(e){}
-function setMode(m){mode=m;['fem','masc','off'].forEach(k=>$(k).classList.toggle('on',k===m))}
-setMode('fem');
-$('fem').onclick=()=>setMode('fem');$('masc').onclick=()=>setMode('masc');$('off').onclick=()=>setMode('off');
+const cv=$('c'),vid=document.createElement('video');vid.playsInline=true;vid.muted=true;
+let g=1,k=1,running=false,landmarker=null,topo=null,prev=[];
+const setG=v=>{g=v;$('fem').classList.toggle('on',v==1);$('masc').classList.toggle('on',v==-1);$('off').classList.toggle('on',v==0)};
+$('fem').onclick=()=>setG(1);$('masc').onclick=()=>setG(-1);$('off').onclick=()=>setG(0);
+$('k').oninput=e=>k=e.target.value/100;
+$('snap').onclick=()=>{if(!running)return;const a=document.createElement('a');a.href=cv.toDataURL('image/png');a.download='gender-swap.png';a.click()};
+
+// ---------- landmark groups (MediaPipe 468 mesh) ----------
+const EYE_R=[33,7,163,144,145,153,154,155,133,246,161,160,159,158,157,173],EYE_L=[263,249,390,373,374,380,381,382,362,466,388,387,386,385,384,398];
+const BROW_R=[46,53,52,65,55,70,63,105,66,107],BROW_L=[276,283,282,295,285,300,293,334,296,336];
+const LIPS_OUT=[61,146,91,181,84,17,314,405,321,375,291,185,40,39,37,0,267,269,270,409];
+const LIPS=LIPS_OUT.concat([78,95,88,178,87,14,317,402,318,324,308,191,80,81,82,13,312,311,310,415]);
+const NOSE=[1,2,4,5,6,19,94,97,98,129,326,327,358,48,278,64,294,195,197,3,45,275,115,344];
+const OVAL=[10,338,297,332,284,251,389,356,454,323,361,288,397,365,379,378,400,377,152,148,176,149,150,136,172,58,132,93,234,127,162,21,54,103,67,109];
+const JAW=[234,93,132,58,172,136,150,149,176,148,454,323,361,288,397,365,379,378,400,377];
+const CHIN=[152,148,176,377,400,149,378];
+const CHEEK=[205,50,101,36,425,280,330,266,187,411];
+const sm=(a,b,x)=>{const t=Math.max(0,Math.min(1,(x-a)/(b-a)));return t*t*(3-2*t)};
+const cen=(P,idx)=>{let x=0,y=0;idx.forEach(i=>{x+=P[i][0];y+=P[i][1]});return[x/idx.length,y/idx.length]};
+
+function basis(P){
+  const t=P[10],c=P[152];let a=[c[0]-t[0],c[1]-t[1]];const fh=Math.hypot(a[0],a[1]);a=[a[0]/fh,a[1]/fh];
+  return{ax:a,pp:[-a[1],a[0]],fh,mid:[(P[234][0]+P[454][0])/2,(P[234][1]+P[454][1])/2]};
+}
+function warp(P){
+  const Q=P.map(p=>p.slice()),{ax,pp,fh,mid}=basis(P),f=(a,b)=>g>0?a:b;
+  const T=(idx,sw,sl,dl,c)=>{
+    c=c||cen(P,idx);sw=1+(sw-1)*k;sl=1+(sl-1)*k;dl*=k;
+    idx.forEach(i=>{const vx=P[i][0]-c[0],vy=P[i][1]-c[1];
+      let a=(vx*ax[0]+vy*ax[1])*sl+dl*fh,b=(vx*pp[0]+vy*pp[1])*sw;
+      Q[i]=[c[0]+ax[0]*a+pp[0]*b,c[1]+ax[1]*a+pp[1]*b]});
+  };
+  T(OVAL,f(.96,1.04),1,0,mid);
+  T(JAW,f(.86,1.1),1,0,mid);
+  T(CHIN,f(.86,1.1),1,f(-.012,.028),mid);
+  T(EYE_R,f(1.1,.95),f(1.16,.92),0);T(EYE_L,f(1.1,.95),f(1.16,.92),0);
+  T(BROW_R,f(1,1.05),1,f(-.022,.014));T(BROW_L,f(1,1.05),1,f(-.022,.014));
+  T(LIPS,f(1.03,.97),f(1.25,.85),0);
+  T(NOSE,f(.93,1.07),f(.93,1.06),0);
+  return Q;
+}
+
+// ---------- topology built once from the first detected face ----------
+function buildTopo(P){
+  const xs=P.map(p=>p[0]),ys=P.map(p=>p[1]),x0=Math.min(...xs),x1=Math.max(...xs),y0=Math.min(...ys),y1=Math.max(...ys);
+  const cx=(x0+x1)/2,cy=(y0+y1)/2,rx=(x1-x0)*.8,ry=(y1-y0)*.85,ring=[];
+  for(let i=0;i<20;i++){const a=i/20*Math.PI*2;ring.push([cx+Math.cos(a)*rx,cy+Math.sin(a)*ry])}
+  const all=P.concat(ring),d=Delaunator.from(all),tris=Uint16Array.from(d.triangles);
+  const {ax,fh}=basis(P),top=P[10],m=new Float32Array(all.length*4);
+  const S=a=>new Set(a),eyes=S(EYE_R.concat(EYE_L)),brow=S(BROW_R.concat(BROW_L)),lips=S(LIPS),lo=S(LIPS_OUT),ov=S(OVAL),ch=S(CHEEK);
+  for(let i=0;i<468;i++){
+    const t=((P[i][0]-top[0])*ax[0]+(P[i][1]-top[1])*ax[1])/fh;
+    let skin=1,stub=sm(.66,.82,t),lip=lo.has(i)?1:0,che=ch.has(i)?1:0;
+    if(eyes.has(i)||brow.has(i)||lips.has(i))skin=0;
+    if(eyes.has(i)||lips.has(i)||brow.has(i))stub=0;
+    if(ov.has(i)){skin*=.2;stub*=.5}
+    m.set([skin,stub,lip,che],i*4);
+  }
+  return{tris,m,n:all.length,ring};
+}
+
+// ---------- WebGL ----------
+const gl=cv.getContext('webgl',{preserveDrawingBuffer:true,antialias:false});
+const VS=`attribute vec2 pos;attribute vec2 uv;attribute vec4 m;varying vec2 vUv;varying vec4 vM;void main(){gl_Position=vec4(pos,0.,1.);vUv=uv;vM=m;}`;
+const FS=`precision mediump float;varying vec2 vUv;varying vec4 vM;uniform sampler2D tex;uniform vec2 px;uniform float g;uniform float k;
+float h(vec2 p){return fract(sin(dot(p,vec2(12.9898,78.233)))*43758.5453);}
+void main(){
+ vec3 c=texture2D(tex,vUv).rgb;
+ if(g!=0.){
+  float s=vM.x*k;
+  if(g>0.){
+   vec3 acc=c;float ws=1.;
+   for(int i=0;i<8;i++){float a=float(i)*.785398;vec3 q=texture2D(tex,vUv+vec2(cos(a),sin(a))*px*3.).rgb;vec3 d=q-c;float w=exp(-dot(d,d)*35.);acc+=q*w;ws+=w;}
+   c=mix(c,acc/ws,clamp(s*.95,0.,1.));
+   c=c*(1.+.05*s)+vec3(.03,.0,.012)*s;
+   c=mix(c,vec3(.8,.2,.32),vM.z*.4*k);
+   c=mix(c,vec3(1.,.55,.6),vM.w*.22*k);
+  }else{
+   c*=1.-.07*s;
+   float n=h(floor(vUv/px/1.2));
+   c*=1.-.16*vM.y*k;
+   c=mix(c,c*.35,step(.55,n)*vM.y*k*.6);
+   c=(c-.5)*(1.+.08*s)+.5;
+  }
+ }
+ gl_FragColor=vec4(c,1.);
+}`;
+function sh(t,s){const o=gl.createShader(t);gl.shaderSource(o,s);gl.compileShader(o);if(!gl.getShaderParameter(o,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(o));return o}
+const pr=gl.createProgram();gl.attachShader(pr,sh(gl.VERTEX_SHADER,VS));gl.attachShader(pr,sh(gl.FRAGMENT_SHADER,FS));gl.linkProgram(pr);gl.useProgram(pr);
+const loc=n=>gl.getAttribLocation(pr,n),U=n=>gl.getUniformLocation(pr,n);
+const vb=gl.createBuffer(),ib=gl.createBuffer(),tex=gl.createTexture();
+gl.bindTexture(gl.TEXTURE_2D,tex);
+[[gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE],[gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE],[gl.TEXTURE_MIN_FILTER,gl.LINEAR],[gl.TEXTURE_MAG_FILTER,gl.LINEAR]].forEach(([a,b])=>gl.texParameteri(gl.TEXTURE_2D,a,b));
+function attribs(){
+  gl.bindBuffer(gl.ARRAY_BUFFER,vb);
+  [['pos',2,0],['uv',2,2],['m',4,4]].forEach(([n,sz,o])=>{const l=loc(n);gl.enableVertexAttribArray(l);gl.vertexAttribPointer(l,sz,gl.FLOAT,false,32,o*4)});
+}
+const quad=new Float32Array([-1,-1,1,1,0,0,0,0, 1,-1,0,1,0,0,0,0, -1,1,1,0,0,0,0,0, 1,1,0,0,0,0,0,0]);
+
+function frame(){
+  if(!running)return;
+  const W=cv.width,H=cv.height;
+  gl.viewport(0,0,W,H);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGB,gl.RGB,gl.UNSIGNED_BYTE,vid);
+  gl.uniform2f(U('px'),1/W,1/H);gl.uniform1f(U('k'),k);
+  // background video
+  gl.uniform1f(U('g'),0);
+  gl.bindBuffer(gl.ARRAY_BUFFER,vb);gl.bufferData(gl.ARRAY_BUFFER,quad,gl.DYNAMIC_DRAW);attribs();
+  gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
+  if(g!==0&&landmarker){
+    const res=landmarker.detectForVideo(vid,performance.now());
+    res.faceLandmarks.forEach((lm,fi)=>{
+      let P=lm.map(p=>[p.x*W,p.y*H]);
+      const pv=prev[fi];if(pv&&pv.length===P.length)P=P.map((p,i)=>[pv[i][0]+(p[0]-pv[i][0])*.6,pv[i][1]+(p[1]-pv[i][1])*.6]);
+      prev[fi]=P;
+      if(!topo)topo=buildTopo(P);
+      const Q=warp(P),ring=topo.ring,n=topo.n,v=new Float32Array(n*8);
+      for(let i=0;i<n;i++){
+        const isR=i>=468,s=isR?ring[i-468]:P[i],q=isR?s:Q[i];
+        v.set([1-2*q[0]/W,1-2*q[1]/H,s[0]/W,s[1]/H,topo.m[i*4],topo.m[i*4+1],topo.m[i*4+2],topo.m[i*4+3]],i*8);
+      }
+      gl.uniform1f(U('g'),g);
+      gl.bufferData(gl.ARRAY_BUFFER,v,gl.DYNAMIC_DRAW);attribs();
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,ib);gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,topo.tris,gl.DYNAMIC_DRAW);
+      gl.drawElements(gl.TRIANGLES,topo.tris.length,gl.UNSIGNED_SHORT,0);
+    });
+    if(!res.faceLandmarks.length)prev=[];
+  }
+  requestAnimationFrame(frame);
+}
+
 $('start').onclick=async()=>{
+  $('start').disabled=true;msg('Loading face model…');
   try{
+    const fs=await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
+    const opt=d=>({baseOptions:{modelAssetPath:"https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",delegate:d},runningMode:"VIDEO",numFaces:3});
+    try{landmarker=await FaceLandmarker.createFromOptions(fs,opt("GPU"))}catch(e){landmarker=await FaceLandmarker.createFromOptions(fs,opt("CPU"))}
     const st=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:640,height:480},audio:false});
     vid.srcObject=st;await vid.play();
     cv.width=vid.videoWidth||640;cv.height=vid.videoHeight||480;
-    manual={x:cv.width/2,y:cv.height*.48,w:cv.height*.4,h:cv.height*.52};
-    $('ph').style.display='none';$('start').style.display='none';running=true;
-    if(!detector){$('manual').style.display='flex';msg('Your browser has no built-in face detection, so place the filter on your face manually.')}
-    loop();
-  }catch(e){msg('Camera unavailable: '+e.message+'. If this page is embedded, open it in its own tab and allow camera access.')}
+    $('ph').style.display='none';$('start').style.display='none';running=true;msg('');frame();
+  }catch(e){msg('Could not start: '+e.message);$('start').disabled=false}
 };
-$('size').oninput=e=>{const w=+e.target.value;manual.w=w;manual.h=w*1.3};
-let drag=false;
-const pos=e=>{const r=cv.getBoundingClientRect();return[(e.clientX-r.left)*cv.width/r.width,(e.clientY-r.top)*cv.height/r.height]};
-cv.onpointerdown=e=>{drag=true;[manual.x,manual.y]=pos(e)};
-cv.onpointermove=e=>{if(drag)[manual.x,manual.y]=pos(e)};
-window.onpointerup=()=>drag=false;
-$('snap').onclick=()=>{if(!running)return;const a=document.createElement('a');a.href=cv.toDataURL('image/png');a.download='gender-swap.png';a.click()};
-
-async function detect(){
-  if(!detector||performance.now()-lastDet<120)return;lastDet=performance.now();
-  try{const r=await detector.detect(vid);
-    faces=r.map(f=>{const b=f.boundingBox,W=cv.width;
-      const o={x:W-(b.x+b.width),y:b.y,w:b.width,h:b.height*1.1};
-      (f.landmarks||[]).forEach(l=>{const p=l.locations[0];const q={x:W-p.x,y:p.y};
-        if(l.type==='mouth')o.mouth=q;else if(l.type==='eye'){(o.eyes=o.eyes||[]).push(q)}});
-      return o});
-  }catch(e){detector=null;$('manual').style.display='flex';msg('Face detection failed; using manual placement.')}
-}
-function geom(f){
-  const eyes=f.eyes&&f.eyes.length>=2?f.eyes:[{x:f.x+f.w*.3,y:f.y+f.h*.4},{x:f.x+f.w*.7,y:f.y+f.h*.4}];
-  const mouth=f.mouth||{x:f.x+f.w/2,y:f.y+f.h*.76};
-  return{eyes,mouth};
-}
-function fem(f){
-  const{x,y,w,h}=f,cx=x+w/2,{eyes,mouth}=geom(f);
-  // skin smoothing
-  ctx.save();ctx.beginPath();ctx.ellipse(cx,y+h*.55,w*.5,h*.5,0,0,7);ctx.clip();
-  try{ctx.filter='blur('+Math.max(2,w/45)+'px) brightness(1.06)';ctx.globalAlpha=.6;ctx.drawImage(cv,0,0)}catch(e){}
-  ctx.restore();ctx.filter='none';ctx.globalAlpha=1;
-  // blush
-  [-.28,.28].forEach(d=>{const g=ctx.createRadialGradient(cx+d*w*1.1,y+h*.65,0,cx+d*w*1.1,y+h*.65,w*.2);
-    g.addColorStop(0,'rgba(255,100,130,.4)');g.addColorStop(1,'rgba(255,100,130,0)');ctx.fillStyle=g;ctx.fillRect(x,y,w,h*1.2)});
-  // lips
-  const mw=w*.2;ctx.fillStyle='rgba(205,40,75,.8)';ctx.beginPath();
-  ctx.moveTo(mouth.x-mw,mouth.y);ctx.quadraticCurveTo(mouth.x-mw/2,mouth.y-h*.07,mouth.x,mouth.y-h*.03);
-  ctx.quadraticCurveTo(mouth.x+mw/2,mouth.y-h*.07,mouth.x+mw,mouth.y);
-  ctx.quadraticCurveTo(mouth.x,mouth.y+h*.08,mouth.x-mw,mouth.y);ctx.fill();
-  // lashes + liner
-  ctx.strokeStyle='rgba(20,10,10,.85)';ctx.lineCap='round';
-  eyes.forEach(e=>{const r=w*.12;ctx.lineWidth=Math.max(2,w/50);ctx.beginPath();ctx.arc(e.x,e.y,r,Math.PI*1.1,Math.PI*1.9);ctx.stroke();
-    ctx.lineWidth=Math.max(1,w/90);for(let i=0;i<5;i++){const a=Math.PI*(1.15+i*.17);
-      ctx.beginPath();ctx.moveTo(e.x+Math.cos(a)*r,e.y+Math.sin(a)*r);ctx.lineTo(e.x+Math.cos(a)*r*1.4,e.y+Math.sin(a)*r*1.5);ctx.stroke()}});
-  // thin arched brows
-  ctx.lineWidth=Math.max(1.5,w/70);ctx.strokeStyle=hairCol;
-  eyes.forEach(e=>{ctx.beginPath();ctx.moveTo(e.x-w*.12,e.y-h*.1);ctx.quadraticCurveTo(e.x,e.y-h*.17,e.x+w*.12,e.y-h*.1);ctx.stroke()});
-  // long hair
-  const g=ctx.createLinearGradient(0,y-h*.3,0,y+h*1.6);g.addColorStop(0,hairCol);g.addColorStop(1,'#2a160c');
-  ctx.fillStyle=g;ctx.globalAlpha=.93;ctx.beginPath();
-  ctx.moveTo(x-w*.1,y+h*.3);ctx.bezierCurveTo(x-w*.1,y-h*.4,x+w*1.1,y-h*.4,x+w*1.1,y+h*.3);
-  ctx.bezierCurveTo(x+w*1.3,y+h*.9,x+w*1.35,y+h*1.4,x+w*1.2,y+h*1.65);
-  ctx.lineTo(x+w*.92,y+h*1.5);ctx.bezierCurveTo(x+w*1,y+h*1,x+w*.98,y+h*.6,x+w*.9,y+h*.28);
-  ctx.quadraticCurveTo(cx+w*.15,y-h*.02,x+w*.1,y+h*.3);
-  ctx.bezierCurveTo(x+w*.02,y+h*.6,x,y+h,x+w*.08,y+h*1.5);
-  ctx.lineTo(x-w*.2,y+h*1.65);ctx.bezierCurveTo(x-w*.35,y+h*1.4,x-w*.3,y+h*.9,x-w*.1,y+h*.3);ctx.fill();
-  ctx.globalAlpha=1;
-}
-function masc(f){
-  const{x,y,w,h}=f,cx=x+w/2,{eyes}=geom(f);
-  // jaw shadow / contrast
-  ctx.save();ctx.beginPath();ctx.ellipse(cx,y+h*.55,w*.5,h*.5,0,0,7);ctx.clip();
-  const sh=ctx.createLinearGradient(0,y+h*.5,0,y+h);sh.addColorStop(0,'rgba(60,40,30,0)');sh.addColorStop(1,'rgba(60,40,30,.28)');
-  ctx.fillStyle=sh;ctx.fillRect(x,y,w,h*1.1);
-  // stubble
-  ctx.fillStyle='rgba(30,22,18,.55)';
-  dots.forEach(([u,v,r])=>{const px=cx+u*w*.46,py=y+h*.58+v*h*.4;
-    if(py>y+h*.88&&Math.abs(px-cx)<w*.13&&py<y+h*.93)return;
-    ctx.beginPath();ctx.arc(px,py,Math.max(.7,w/160)*r,0,7);ctx.fill()});
-  ctx.restore();
-  // thick brows
-  ctx.strokeStyle='rgba(25,15,10,.9)';ctx.lineCap='round';ctx.lineWidth=Math.max(3,w/28);
-  eyes.forEach(e=>{ctx.beginPath();ctx.moveTo(e.x-w*.13,e.y-h*.085);ctx.lineTo(e.x+w*.13,e.y-h*.1);ctx.stroke()});
-  // short hair
-  ctx.fillStyle='#1f1812';ctx.beginPath();
-  ctx.moveTo(x-w*.02,y+h*.38);ctx.bezierCurveTo(x-w*.12,y-h*.15,x+w*.2,y-h*.3,cx,y-h*.28);
-  ctx.bezierCurveTo(x+w*.8,y-h*.3,x+w*1.12,y-h*.15,x+w*1.02,y+h*.38);
-  ctx.lineTo(x+w*.95,y+h*.42);ctx.lineTo(x+w*.9,y+h*.22);
-  ctx.quadraticCurveTo(cx,y+h*.02,x+w*.1,y+h*.22);ctx.lineTo(x+w*.05,y+h*.42);ctx.closePath();ctx.fill();
-}
-function loop(){
-  if(!running)return;
-  ctx.save();ctx.scale(-1,1);ctx.drawImage(vid,-cv.width,0,cv.width,cv.height);ctx.restore();
-  if(mode!=='off'){
-    detect();
-    const list=detector?faces:[{x:manual.x-manual.w/2,y:manual.y-manual.h/2,w:manual.w,h:manual.h}];
-    list.forEach(f=>mode==='fem'?fem(f):masc(f));
-  }
-  requestAnimationFrame(loop);
-}
 </script>
 </body>
 </html>
